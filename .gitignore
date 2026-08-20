@@ -1,0 +1,11 @@
+# Environment settings
+.env
+
+# Python Virtual Environments
+.venv/
+__pycache__/
+*.pyc
+
+# Local data / outputs
+output/
+artifacts/temp_*.parquet
