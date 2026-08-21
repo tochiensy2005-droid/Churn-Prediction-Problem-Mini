@@ -57,10 +57,29 @@ def main():
     merged = merged.merge(df_rec, on=["customer_id", "snapshot_date"], how="left")
     merged["churn_next_30d"] = churn_labels
     
-    # Save output
+    # 8. Chronological Preprocessing (Median Imputation)
+    logger.info("Applying chronological preprocessing (median imputation strictly fit on Train)...")
+    train_end = pd.Timestamp("2025-08-01")
+    meta_cols = ["customer_id", "snapshot_date", "churn_next_30d"]
+    feature_cols = [c for c in merged.columns if c not in meta_cols]
+    
+    # Compute medians strictly on Train split (<= 2025-08-01)
+    train_mask = pd.to_datetime(merged["snapshot_date"]) <= train_end
+    train_medians = merged.loc[train_mask, feature_cols].median()
+    
+    # Impute the entire merged dataset
+    merged[feature_cols] = merged[feature_cols].fillna(train_medians)
+    merged[feature_cols] = merged[feature_cols].fillna(0.0) # Fallback for any all-NaN columns on Train
+    
+    # Save output parquet
     output_path = config.OUTPUT_DIR / "churn_temporal_dataset.parquet"
     merged.to_parquet(output_path, index=False)
-    logger.info(f"Temporal dataset successfully generated at {output_path}. Shape: {merged.shape}")
+    logger.info(f"Preprocessed temporal dataset successfully generated at {output_path}. Shape: {merged.shape}")
+    
+    # Save output CSV
+    output_csv = config.OUTPUT_DIR / "churn_temporal_dataset.csv"
+    merged.to_csv(output_csv, index=False)
+    logger.info(f"Preprocessed temporal dataset successfully saved to CSV at {output_csv}")
 
 if __name__ == "__main__":
     main()

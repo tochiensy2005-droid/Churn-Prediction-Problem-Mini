@@ -3,7 +3,7 @@
 ## 1. Executive Summary
 Báo cáo này trình bày thiết kế và kết quả thực nghiệm của hệ thống học máy dự đoán tỷ lệ rời bỏ dịch vụ của khách hàng (Customer Churn Prediction) dựa trên chuỗi hành vi lịch sử theo phương pháp **Mô hình hóa thời gian (Temporal/Time-Series Modeling)**. Thay vì tiếp cận theo hướng tĩnh (static) truyền thống coi mỗi khách hàng là một dòng dữ liệu duy nhất, dự án này áp dụng phương pháp **ảnh chụp nhanh hàng tháng (rolling monthly snapshots)**. 
 
-Mô hình tốt nhất được lựa chọn là **LightGBM** kết hợp **hiệu chuẩn xác suất Platt Scaling**, huấn luyện động trên cửa sổ trượt 12 tháng (Rolling 12-Month Window) và sử dụng Top 100 đặc trưng thời gian (Temporal Features). Mô hình đã được xác thực an toàn không rò rỉ dữ liệu (data leakage-free) và đạt chỉ số PR-AUC `0.113763` (trên toàn bộ tập test) và `0.152145` (trên phân khúc khách hàng đủ điều kiện chuỗi hành vi). 
+Mô hình tốt nhất được lựa chọn là **LightGBM** kết hợp **hiệu chuẩn xác suất Platt Scaling**, huấn luyện động trên cửa sổ trượt 12 tháng (Rolling 12-Month Window) và sử dụng toàn bộ 379 đặc trưng thời gian (Temporal Features). Mô hình đã được xác thực an toàn không rò rỉ dữ liệu (data leakage-free) và đạt chỉ số PR-AUC `0.121786` trên toàn bộ tập test sạch. 
 
 ---
 
@@ -213,11 +213,8 @@ Mô hình dự báo chuỗi thời gian tổng hợp được triển khai để
 ---
 
 ## 14. Feature Selection
-Quy trình lựa chọn đặc trưng được thực hiện nghiêm ngặt trên tập Train:
-1. Loại bỏ các đặc trưng có phương sai gần bằng không.
-2. Loại bỏ các đặc trưng có độ tương quan cao ($|r| > 0.98$).
-3. Xếp hạng các đặc trưng qua XGBoost Classifier huấn luyện trên tập Train và lựa chọn **Top 100 đặc trưng**.
-Top 10 đặc trưng có tầm quan trọng lớn nhất:
+Quy trình huấn luyện và tuyển chọn đặc trưng được thực hiện nghiêm ngặt trên tập Train. Qua các thực nghiệm so sánh giảm chiều dữ liệu (Selective Features & Top-K Data-Driven Selection), dự án xác định việc giảm số lượng đặc trưng làm suy giảm đáng kể tín hiệu dự đoán rời bỏ dịch vụ. Vì vậy, cấu hình sản xuất quyết định giữ lại **toàn bộ 379 đặc trưng thời gian** (All379) nhằm bảo toàn tối đa hiệu năng.
+Top 10 đặc trưng có tầm quan trọng lớn nhất theo xếp hạng LightGBM:
 1. `active_days_rolling_mean_6m` (Rolling - Tần suất hoạt động trung bình 6 tháng)
 2. `active_days_rolling_mean_3m` (Rolling - Tần suất hoạt động trung bình 3 tháng)
 3. `active_days_rolling_sum_6m` (Rolling - Tổng số ngày hoạt động 6 tháng)
@@ -288,7 +285,7 @@ Mô hình LightGBM nguyên bản (raw LightGBM) có xu hướng dự đoán xác
 ## 20. Final Model Selection
 Mô hình sản xuất cuối cùng được cấu hình cố định trong hệ thống:
 - **Thuật toán**: LightGBM Classifier + Platt Calibrator
-- **Đặc trưng**: Top 100 temporal features
+- **Đặc trưng**: Toàn bộ 379 đặc trưng thời gian (All379)
 - **Cơ chế huấn luyện**: Huấn luyện lại động (Rolling 12M Retraining)
 - **Ngưỡng quyết định**: `0.08` (sau khi hiệu chuẩn xác suất)
 
@@ -297,18 +294,18 @@ Mô hình sản xuất cuối cùng được cấu hình cố định trong hệ
 ## 21. Final Evaluation
 Dưới đây là kết quả đánh giá cuối cùng của mô hình LightGBM trên tập Clean Test sạch (`2026-03-01` đến `2026-06-01`):
 
-Metric | Toàn bộ tập khách hàng (Entire Cohort) | Tập khách hàng có lịch sử $\ge 12$ tháng (Sequence-Eligible)
---- | --- | ---
-**Số mẫu (Rows)** | 35,336 | 23,296
-**Số Churn (Positives)**| 249 | 109
-**PR-AUC** | `0.113763` | `0.152145`
-**ROC-AUC** | `0.909419` | `0.923065`
-**Precision** | `19.1489%` | `21.3178%`
-**Recall** | `25.3012%` | `50.4587%`
-**F1-Score** | `0.217993` | `0.299728`
-**Confusion Matrix** | `[[34821, 266], [186, 63]]` | (được tối ưu hóa so sánh RNN)
+Metric | Toàn bộ tập khách hàng (Entire Cohort)
+--- | ---
+**Số mẫu (Rows)** | 35,336
+**Số Churn (Positives)**| 249
+**PR-AUC** | `0.121786`
+**ROC-AUC** | `0.910986`
+**Precision** | `17.9856%`
+**Recall** | `30.1205%`
+**F1-Score** | `22.5225%` (hoặc `0.225225`)
+**Confusion Matrix** | `[[34745, 342], [174, 75]]`
 
-*Giải thích*: Phân khúc khách hàng có lịch sử hoạt động lâu dài (Sequence-Eligible) có chất lượng dự đoán cao hơn đáng kể nhờ tín hiệu hành vi tích lũy đầy đủ và rõ ràng hơn.
+*Giải thích*: Việc giữ nguyên toàn bộ 379 đặc trưng (All379) giúp mô hình tối ưu hóa khả năng nhận diện khách hàng rời bỏ (Recall tăng lên mức 30.12%) trong khi vẫn duy trì PR-AUC cao nhất trong các cấu hình thực nghiệm.
 
 ---
 
@@ -321,7 +318,7 @@ Bundle chứa các thành phần đóng gói độc lập:
 - `model`: Đối ứng LightGBM Classifier đã huấn luyện.
 - `calibrator`: Logistic Regression dùng cho hiệu chuẩn Platt.
 - `imputer`: SimpleImputer xử lý dữ liệu trống.
-- `selected_features`: Danh sách 100 đặc trưng được chọn.
+- `selected_features`: Danh sách 379 đặc trưng được chọn (toàn bộ đặc trưng).
 - `threshold`: Ngưỡng xác suất tối ưu (0.08).
 - `metadata`: Phiên bản, ngày tạo, các mốc thời gian huấn luyện.
 

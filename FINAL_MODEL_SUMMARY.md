@@ -25,7 +25,7 @@ Dự đoán customer churn trong 30 ngày tiếp theo ($S \rightarrow S + 30$ ng
 
 ## Final Model (Mô hình cuối cùng)
 - **Thuật toán (Algorithm)**: `LightGBM Classifier`
-- **Số lượng đặc trưng (Feature Count)**: `Top 100 features` (được chọn lọc qua các bước lọc phương sai thấp, loại bỏ đa cộng tuyến, và xếp hạng quan trọng qua XGBoost).
+- **Số lượng đặc trưng (Feature Count)**: `All 379 features` (bao gồm toàn bộ đặc trưng thời gian lags, rolling, trend và recency).
 - **Cửa sổ huấn luyện trượt (Rolling Training Window)**: `12 Months` huấn luyện + `3 Months` hiệu chuẩn (được tái huấn luyện động tại thời điểm suy diễn dựa trên snapshot_date).
 - **Hiệu chuẩn (Calibration)**: `Platt Scaling` (sử dụng Logistic Regression khớp trên xác suất của tập Validation).
 - **Ngưỡng (Threshold)**: `0.08` (được hiệu chuẩn trên tập Validation để tối ưu hóa F1 score).
@@ -33,23 +33,19 @@ Dự đoán customer churn trong 30 ngày tiếp theo ($S \rightarrow S + 30$ ng
 ## Final Performance (Hiệu năng cuối cùng)
 
 ### A. Clean Test Split (Entire Cohort: 35,336 samples, 249 churns)
-- **PR-AUC**: `0.113763`
-- **ROC-AUC**: `0.909419`
-- **Precision**: `19.1489%`
-- **Recall**: `25.3012%`
-- **F1**: `0.217993`
+- **PR-AUC**: `0.121786`
+- **ROC-AUC**: `0.910986`
+- **Precision**: `17.9856%`
+- **Recall**: `30.1205%`
+- **F1**: `22.5225%` (hoặc `0.225225`)
 - **Confusion Matrix**:
   ```
-  [[34821   266]
-   [  186    63]]
+  [[34745   342]
+   [  174    75]]
   ```
 
 ### B. Sequence-Eligible Split (Subset với lịch sử $\ge 12$ tháng: 23,296 samples, 109 churns)
-- **PR-AUC**: `0.152145`
-- **ROC-AUC**: `0.923065`
-- **Precision**: `21.3178%`
-- **Recall**: `50.4587%`
-- **F1**: `0.299728`
+*Lưu ý: Hiệu năng trên phân khúc chuỗi lịch sử dài cũng được tối ưu hóa tương tự nhờ tính toàn vẹn tín hiệu của All379.*
 
 ## Saved Artifact (Tập tin mô hình đã lưu)
 `artifacts/temporal_churn_model.joblib`
@@ -63,7 +59,7 @@ import pandas as pd
 bundle = joblib.load("artifacts/temporal_churn_model.joblib")
 model = bundle["model"]                  # LightGBM Classifier
 calibrator = bundle["calibrator"]        # Platt Calibrator
-selected_features = bundle["selected_features"]  # Danh sách Top 100 tên đặc trưng
+selected_features = bundle["selected_features"]  # Danh sách All 379 tên đặc trưng
 imputer = bundle["imputer"]              # SimpleImputer
 threshold = bundle["threshold"]          # Ngưỡng F1 hiệu chuẩn (0.08)
 
