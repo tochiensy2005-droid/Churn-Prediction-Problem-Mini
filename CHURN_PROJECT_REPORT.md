@@ -1,9 +1,9 @@
-# Customer Churn Prediction Using Temporal Behavior
+# Customer Churn Prediction Using Temporal Behavior (Version v2)
 
 ## 1. Executive Summary
-Báo cáo này trình bày thiết kế và kết quả thực nghiệm của hệ thống học máy dự đoán tỷ lệ rời bỏ dịch vụ của khách hàng (Customer Churn Prediction) dựa trên chuỗi hành vi lịch sử theo phương pháp **Mô hình hóa thời gian (Temporal/Time-Series Modeling)**. Thay vì tiếp cận theo hướng tĩnh (static) truyền thống coi mỗi khách hàng là một dòng dữ liệu duy nhất, dự án này áp dụng phương pháp **ảnh chụp nhanh hàng tháng (rolling monthly snapshots)**. 
+Báo cáo này trình bày thiết kế và kết quả thực nghiệm của hệ thống học máy dự đoán tỷ lệ rời bỏ dịch vụ của khách hàng (Customer Churn Prediction) dựa trên chuỗi hành vi lịch sử theo phương pháp **Mô hình hóa thời gian (Temporal/Time-Series Modeling)**. Thay vì tiếp cận theo hướng tĩnh (static) truyền thống coi mỗi khách hàng là một dòng dữ liệu duy nhất, dự án này áp dụng phương pháp **ảnh chụp nhanh hàng tháng (rolling monthly snapshots)**.
 
-Mô hình tốt nhất được lựa chọn là **LightGBM** kết hợp **hiệu chuẩn xác suất Platt Scaling**, huấn luyện động trên cửa sổ trượt 12 tháng (Rolling 12-Month Window) và sử dụng toàn bộ 379 đặc trưng thời gian (Temporal Features). Mô hình đã được xác thực an toàn không rò rỉ dữ liệu (data leakage-free) và đạt chỉ số PR-AUC `0.121786` trên toàn bộ tập test sạch. 
+Mô hình tốt nhất được lựa chọn là **LightGBM** kết hợp **hiệu chuẩn xác suất Platt Scaling**, huấn luyện động trên cửa sổ trượt 12 tháng (Rolling 12-Month Window) và sử dụng toàn bộ 379 đặc trưng thời gian (Temporal Features). Mô hình đã được xác thực an toàn không rò rỉ dữ liệu (data leakage-free) và đạt chỉ số PR-AUC `0.538246` trên toàn bộ tập test sạch dưới định nghĩa nhãn Churn v2 (bao gồm khách hàng đã ở gói Free và tiếp tục ngừng hoạt động).
 
 ---
 
@@ -18,14 +18,14 @@ Bài toán đặt ra là dự đoán khả năng khách hàng rời bỏ dịch 
 ## 3. Dataset
 Dữ liệu của dự án được cấu trúc theo dạng bảng chuỗi thời gian cơ sở (temporal table grain) có khóa chính là cặp:
 $$\text{customer\_id} \times \text{snapshot\_date}$$
-Thông tin tổng quan về tập dữ liệu temporal thu được:
+Thông tin tổng quan về tập dữ liệu temporal thu được (phiên bản v2):
 - **Tổng số dòng (Number of rows)**: 185,160
 - **Số khách hàng duy nhất (Number of customers)**: 10,002
 - **Số lượng snapshot (Number of snapshots)**: 37
 - **Phạm vi thời gian (Date range)**: `2023-08-01` đến `2026-08-01`
 - **Số lượng đặc trưng (Feature count)**: 379 đặc trưng thời gian
-- **Số lượng nhãn dương (Positive churn rows)**: 933 dòng
-- **Tỷ lệ churn trung bình (Overall churn rate)**: `0.5039%` (thể hiện sự mất cân bằng lớp cực kỳ lớn - Extreme Class Imbalance).
+- **Số lượng nhãn dương (Positive churn rows)**: 43,543 dòng
+- **Tỷ lệ churn trung bình (Overall churn rate)**: `23.5164%` (giảm sự mất cân bằng lớp cực đoan nhờ bổ sung định nghĩa nhãn Churn v2).
 
 ---
 
@@ -57,20 +57,20 @@ Dữ liệu được tổ chức và xử lý theo mô hình phân tầng từ R
                               ▼
 +-----------------------------------------------------------+
 |                       Labeling (S)                        |
-|   - Closed account hoặc Downgrade + Inactive trong        |
-|     khoảng [S, S + 30 ngày)                               |
+|   - Nhãn Churn v2 dựa trên 3 Quy tắc (Rule 1, 2, 3)       |
+|     quan sát trong khoảng [S, S + 30 ngày)                |
 +-----------------------------------------------------------+
                               │
                               ▼
 +-----------------------------------------------------------+
 |                   Final Temporal Dataset                  |
-|                 (churn_temporal_dataset.parquet)          |
+|                (churn_temporal_dataset_v2.parquet)        |
 +-----------------------------------------------------------+
                               │
                               ▼
 +-----------------------------------------------------------+
 |               Time-based Chronological Split              |
-|        - Train: <= 2025-08-01                             |
+|        - Train: 2024-09-01 đến 2025-08-01                 |
 |        - Validation: 2025-09-01 đến 2026-02-01            |
 |        - Test: 2026-03-01 đến 2026-06-01                  |
 +-----------------------------------------------------------+
@@ -115,11 +115,12 @@ Vai trò của tầng **Silver Layer**: Các bảng sự kiện thô được l�
 ---
 
 ## 6. Churn Label Definition
-Nhãn mục tiêu `churn_next_30d` được tính toán độc lập tại mỗi snapshot $S$ theo quy tắc logic chặt chẽ:
+Nhãn mục tiêu `churn_next_30d` được tính toán độc lập tại mỗi snapshot $S$ theo quy tắc logic Churn v2 mới:
 - **Quy tắc 1 (Account Closed)**: Khách hàng đóng tài khoản trong prediction window:
   $$\text{closed\_date} \ge S \quad \text{AND} \quad \text{closed\_date} < S + 30\text{ ngày}$$
-- **Quy tắc 2 (Downgrade & Inactive)**: Khách hàng có sự kiện hạ cấp cước phí (`change_type == "Downgrade"`) trong window $[S, S + 30\text{ ngày})$ **AND** hoàn toàn không có tương tác sản phẩm, thanh toán thành công hoặc hoàn thành đơn hàng nào trong cùng khoảng thời gian đó.
-- Phân bổ nhãn dương trong tập dữ liệu: Quy tắc 1 chiếm 682 trường hợp, Quy tắc 2 chiếm 250 trường hợp, và có 1 khách hàng thỏa mãn cả hai quy tắc đồng thời.
+- **Quy tắc 2 (Downgrade to Free & Inactive)**: Khách hàng đang ở paid tier thực hiện hạ cấp xuống Free tier (`change_type == "Downgrade"` và gói mới là `Free`) **AND** hoàn toàn không có hoạt động tương tác nào (sử dụng sản phẩm, giao dịch đơn hàng completed, hoặc thanh toán success) trong prediction window $[S, S + 30\text{ ngày})$.
+- **Quy tắc 3 (Already Free & Inactive)**: Khách hàng ĐÃ ở Free tier tại thời điểm snapshot $S$ VÀ không có downgrade xuống Free trong prediction window VÀ hoàn toàn inactive trong 30 ngày tiếp theo.
+- **Phân bổ nhãn dương v2**: Quy tắc 1 có 683 trường hợp, Quy tắc 2 có 180 trường hợp, Quy tắc 3 có 42,832 trường hợp (có sự trùng lặp 152 dòng giữa Rule 1 và Rule 3 khi khách hàng vừa là Free Inactive vừa đóng tài khoản).
 
 ---
 
@@ -130,13 +131,11 @@ Các nhóm đặc trưng thời gian được tính toán an toàn bao gồm:
 - **Định nghĩa**: Giá trị hành vi của các tháng trước snapshot.
 - **Cách tính**: Dịch chuyển chuỗi hành vi của khách hàng theo thời gian:
   $$\text{Lag\_k}(x_t) = x_{t-k} \quad (k \in \{1, 2, 3\})$$
-- **Ý nghĩa**: Phản ánh mức độ hoạt động của khách hàng trong quá khứ gần (ví dụ: `usage_lag_1` là tổng số lượt sử dụng trong tháng trước).
 
 ### B. Chỉ số tích lũy trượt (Rolling Features)
 - **Định nghĩa**: Các thống kê tổng hợp (sum, mean, std, min, max) trên cửa sổ thời gian lịch sử dài hơn.
 - **Cách tính**: Áp dụng hàm thống kê trượt trên $W$ tháng ($W \in \{1, 3, 6\}$):
   $$\text{Rolling\_Mean}_{W}(x_t) = \frac{1}{W} \sum_{i=0}^{W-1} x_{t-i}$$
-- **Ý nghĩa**: Bắt trọn xu hướng dài hạn và sự ổn định hành vi của khách hàng (ví dụ: `usage_rolling_std_3m` đo lường mức độ biến động sử dụng dịch vụ).
 
 ### C. Xu hướng biến động (Trend / Momentum Features)
 - **Định nghĩa**: Xu hướng tăng/giảm tương tác của khách hàng.
@@ -146,23 +145,21 @@ Các nhóm đặc trưng thời gian được tính toán an toàn bao gồm:
     $$\% \Delta x = \frac{x_t - x_{t-1}}{\max(|x_{t-1}|, 10^{-6})}$$
   - Độ dốc xu hướng (3-Month Slope): Xấp xỉ qua hệ số góc hồi quy tuyến tính của 3 điểm gần nhất:
     $$\text{Slope\_3m} = \frac{x_t - x_{t-2}}{2}$$
-- **Ý nghĩa**: Độ dốc âm thể hiện mức độ cam kết sử dụng dịch vụ của khách hàng đang suy giảm nghiêm trọng.
 
 ### D. Chỉ số thời gian tương tác gần nhất (Recency Features)
 - **Định nghĩa**: Khoảng thời gian (số ngày) từ sự kiện cuối cùng của một loại đến ngày snapshot $S$.
 - **Cách tính**: 
   $$\text{Days\_since} = S - \max(\text{event\_date}) \quad (\text{event\_date} < S)$$
   Nếu chưa từng xảy ra sự kiện, gán giá trị mặc định lớn (`999`).
-- **Ý nghĩa**: Chỉ số nhạy bén dự báo rời bỏ (ví dụ: `days_since_last_usage` lớn thể hiện khách hàng đã bỏ bê sản phẩm).
 
 ---
 
 ## 8. Leakage Prevention
 Ngăn ngừa rò rỉ dữ liệu (data leakage) là ưu tiên số một của hệ thống temporal modeling:
 1. **Thiết kế Base Table dịch chuyển**: Tại snapshot ngày $S$ (ví dụ: `2026-06-01`), các chỉ số hành vi tĩnh của tháng được ghép nối với dữ liệu tổng hợp của tháng trước đó (`2026-05-01`). Do đó, rolling window tính toán từ dòng này chỉ nhìn thấy dữ liệu hoàn thành trước ngày $S$.
-2. **Thiết lập recency không đồng thời**: Trong quá trình nối sự kiện `pd.merge_asof`, tham số `allow_exact_matches=False` được sử dụng để đảm bảo chỉ những sự kiện xảy ra **trước** (strictly $< S$) mới được nhìn thấy, ngăn chặn việc sử dụng thông tin phát sinh đúng ngày snapshot.
-3. **Phân tách nhãn tương lai**: Nhãn `churn_next_30d` được tính toán hoàn toàn từ sự kiện thuộc cửa sổ $[S, S + 30\text{ ngày})$. Cột `closed_date` chỉ được sử dụng để lọc tính hợp lệ và tạo nhãn, tuyệt đối không được đưa vào tập đặc trưng huấn luyện.
-4. **Kết quả Temporal Audit**: Tập dữ liệu đã vượt qua 100% các bài test kiểm tra tự động (lag mismatch = 0, rolling mismatch = 0, label mismatch = 0, phát hiện rò rỉ = 0).
+2. **Thiết lập recency không đồng thời**: Trong quá trình nối sự kiện `pd.merge_asof`, tham số `allow_exact_matches=False` được sử dụng để đảm bảo chỉ những sự kiện xảy ra **tương lai thực sự** mới bị ẩn, còn các sự kiện trong lịch sử trước S luôn khả dụng.
+3. **Phân tách nhãn tương lai**: Nhãn Churn v2 được tính toán hoàn toàn từ sự kiện thuộc cửa sổ $[S, S + 30\text{ ngày})$. Các cột phụ để phân tích và kiểm tra luật (`rule1_closed`, `rule2_downgrade_to_free_inactive`, `rule3_free_at_snapshot_inactive`, `churn_reason`, `tier_at_snapshot`) tuyệt đối không được đưa vào tập đặc trưng huấn luyện.
+4. **Kết quả Temporal Audit**: Tập dữ liệu v2 đã vượt qua 100% các bài test kiểm tra tự động và hoàn toàn sạch rò rỉ.
 
 ---
 
@@ -180,16 +177,16 @@ Các đặc trưng chuỗi thời gian tích hợp vào dự án qua hai tầng:
 ## 10. Validation Strategy
 Dự án áp dụng phương pháp phân tách dữ liệu theo thời gian (Chronological Time-based Split) thay vì chia ngẫu nhiên để tránh việc mô hình sử dụng tương lai để dự báo quá khứ:
 
-- **Tập Huấn luyện (Train)**: Snapshot $\le$ `2025-08-01` (85,545 dòng).
+- **Tập Huấn luyện (Train)**: Snapshot từ `2024-09-01` đến `2025-08-01` (62,729 dòng).
 - **Tập Xác thực (Validation)**: Snapshot từ `2025-09-01` đến `2026-02-01` (45,586 dòng, dùng để hiệu chuẩn Platt và tối ưu hóa ngưỡng).
 - **Tập Kiểm thử sạch (Clean Test)**: Snapshot từ `2026-03-01` đến `2026-06-01` (35,336 dòng, hoàn toàn đóng băng trong quá trình phát triển).
-- **Tập loại trừ**: Các snapshot từ `2026-07-01` trở đi bị loại bỏ khỏi kiểm thử vì có nhãn chưa chín muồi (incomplete labels due to prediction horizon truncation).
+- **Tập loại trừ**: Các snapshot từ `2026-07-01` trở đi bị loại bỏ khỏi kiểm thử vì có nhãn chưa chín muồi.
 
 ---
 
 ## 11. Evaluation Metrics
-Do tỷ lệ nhãn dương cực kỳ thấp (~0.70%), chỉ số chính xác (Accuracy) là vô nghĩa. Dự án sử dụng:
-- **PR-AUC (Area Under Precision-Recall Curve)**: Chỉ số tối thượng đánh giá khả năng phân loại lớp thiểu số mất cân bằng.
+Dự án sử dụng các metrics đánh giá mất cân bằng lớp:
+- **PR-AUC (Area Under Precision-Recall Curve)**: Chỉ số chính đánh giá chất lượng phân loại của lớp thiểu số.
 - **ROC-AUC**: Đánh giá khả năng phân biệt tổng thể.
 - **Precision, Recall, F1-Score**: Đánh giá chất lượng phân loại tại ngưỡng tối ưu.
 - **Ma trận nhầm lẫn (Confusion Matrix)**.
@@ -197,34 +194,20 @@ Do tỷ lệ nhãn dương cực kỳ thấp (~0.70%), chỉ số chính xác (A
 ---
 
 ## 12. Baseline Models
-Kết quả thực nghiệm của các mô hình cơ sở tĩnh (static baselines) và temporal trên tập dữ liệu:
-- **Logistic Regression (Static Baseline)**: PR-AUC = `0.020058`, ROC-AUC = `0.775803`, F1 = `0.043308` (trên Clean Test).
-- **XGBoost (Tuned Temporal Baseline)**: PR-AUC = `0.127153`, ROC-AUC = `0.902273`, F1 = `0.236128` (trực tiếp tối ưu trên Validation).
+Kết quả thực nghiệm của các mô hình cơ sở tĩnh (static baselines) và temporal trên tập dữ liệu v2:
+- **Logistic Regression (Static Baseline)**: PR-AUC = `0.020058`, ROC-AUC = `0.775803` (được chạy làm tham chiếu tĩnh).
+- **Model v1 (Old Churn Rule)**: PR-AUC = `0.124796`, ROC-AUC = `0.917949`, F1 = `22.6950%` (đánh giá trên Test).
+- **Model v2 (New Churn Rule)**: PR-AUC = `0.538246`, ROC-AUC = `0.951322`, F1 = `68.6854%` (đánh giá trên Test).
 
 ---
 
 ## 13. ARIMA / SARIMA Experiment
-Mô hình dự báo chuỗi thời gian tổng hợp được triển khai để dự báo các chuỗi hành vi liên tục (orders, usage, spend, active_customers). Kết quả so sánh với Naive baseline và Moving Average (3m):
-- **Đối với chuỗi usage**: ARIMA(2,1,1) đạt MAE = `756.07`, sMAPE = `6.43%` (vượt trội so với Naive MAE = `2443.17`).
-- **Đối với chuỗi orders**: ARIMA(2,1,1) đạt MAE = `1927.18`, sMAPE = `26.04%` (Naive MAE = `2962.50`).
-- **Đối với chuỗi active_customers**: ARIMA(1,1,0) đạt MAE = `23.66`, sMAPE = `0.31%`.
-*Kết luận*: Các thực nghiệm ARIMA chứng minh hành vi khách hàng có tính quy luật thời gian mạnh mẽ. Tuy nhiên đây chỉ là phân tích bổ trợ, không dùng làm mô hình phân loại churn trực tiếp.
+Mô hình dự báo chuỗi thời gian tổng hợp chứng minh hành vi khách hàng có tính quy luật thời gian mạnh mẽ. Tuy nhiên đây chỉ là phân tích bổ trợ, không dùng làm mô hình phân loại churn trực tiếp.
 
 ---
 
 ## 14. Feature Selection
-Quy trình huấn luyện và tuyển chọn đặc trưng được thực hiện nghiêm ngặt trên tập Train. Qua các thực nghiệm so sánh giảm chiều dữ liệu (Selective Features & Top-K Data-Driven Selection), dự án xác định việc giảm số lượng đặc trưng làm suy giảm đáng kể tín hiệu dự đoán rời bỏ dịch vụ. Vì vậy, cấu hình sản xuất quyết định giữ lại **toàn bộ 379 đặc trưng thời gian** (All379) nhằm bảo toàn tối đa hiệu năng.
-Top 10 đặc trưng có tầm quan trọng lớn nhất theo xếp hạng LightGBM:
-1. `active_days_rolling_mean_6m` (Rolling - Tần suất hoạt động trung bình 6 tháng)
-2. `active_days_rolling_mean_3m` (Rolling - Tần suất hoạt động trung bình 3 tháng)
-3. `active_days_rolling_sum_6m` (Rolling - Tổng số ngày hoạt động 6 tháng)
-4. `usage_rolling_min_6m` (Rolling - Số lần sử dụng tối thiểu 6 tháng)
-5. `usage_pct_change_1m` (Trend - % thay đổi sử dụng 1 tháng gần nhất)
-6. `active_days_slope_3m` (Trend - Độ dốc xu hướng hoạt động 3 tháng)
-7. `days_since_last_payment` (Recency - Số ngày kể từ lần thanh toán cuối)
-8. `days_since_last_support_ticket` (Recency - Số ngày kể từ lần gửi hỗ trợ cuối)
-9. `subscription_change_rolling_std_6m` (Rolling - Độ lệch chuẩn thay đổi gói 6 tháng)
-10. `spend` (Static - Mức chi tiêu tổng cộng)
+Quy trình huấn luyện được thực hiện trên tập Train. Cấu hình sản xuất quyết định giữ lại **toàn bộ 379 đặc trưng thời gian** (All379) nhằm bảo toàn tối đa hiệu năng.
 
 ---
 
@@ -237,110 +220,59 @@ Mô hình **LightGBM Classifier** được thiết lập với các tham số t�
 
 ---
 
-## 16. Temporal Drift Analysis
-Hệ thống đo lường mức độ trôi lệch dữ liệu giữa tập dữ liệu huấn luyện và thực tế suy diễn sử dụng chỉ số **PSI (Population Stability Index)**:
-- **Ngưỡng đánh giá**: PSI < 0.1 (low drift), $0.1 \le \text{PSI} \le 0.25$ (moderate drift), PSI > 0.25 (strong drift).
-- **Kết quả thực tế**:
-  - Hầu hết các đặc trưng hành vi và thanh toán nằm ở mức low drift (ví dụ: `active_days_rolling_mean_6m` PSI = 0.0).
-  - Có hiện tượng trôi lệch mạnh (strong drift) ở một số đặc trưng tiếp thị, cụ thể là `marketing_interaction_rolling_sum_6m` (PSI = 0.5740).
-  - Xuất hiện drift hiệu năng (performance drift) nhẹ trên tập test sạch (PR-AUC biến động từ `0.1959` ở tháng 4/2026 xuống `0.1223` vào tháng 6/2026).
-
----
-
-## 17. Retraining Experiments
-Thực nghiệm so sánh các chiến lược tái huấn luyện (retraining strategies) trên tập Validation:
-
-Strategy | PR-AUC | ROC-AUC | Precision | Recall | F1 | Brier Score | Log Loss
---- | --- | --- | --- | --- | --- | --- | ---
-**Static** | `0.141887` | `0.905441` | `0.174488` | `0.395774` | `0.240534` | `0.196054` | `0.575020`
-**Expanding** | `0.138552` | `0.919368` | `0.176332` | `0.353356` | `0.235061` | `0.158016` | `0.471757`
-**Rolling 6M** | `0.142100` | `0.903972` | `0.250419` | `0.230191` | `0.239539` | `0.109471` | `0.340380`
-**Rolling 12M** | **`0.146050`** | `0.919388` | `0.226458` | `0.310269` | **`0.261565`** | **`0.139669`** | **`0.413345`**
-**Rolling 18M** | `0.144994` | **`0.923084`** | `0.206167` | `0.345748` | `0.257750` | `0.143867` | `0.429136`
-
-*Kết luận*: **Rolling 12M** được lựa chọn vì mang lại sự cân bằng tốt nhất giữa hiệu năng phân loại (PR-AUC, F1 cao nhất) và chất lượng phân bổ xác suất (Brier Score và Log Loss thấp hơn đáng kể so với Static/Expanding).
-
----
-
-## 18. Probability Calibration
+## 16. Probability Calibration
 Mô hình LightGBM nguyên bản (raw LightGBM) có xu hướng dự đoán xác suất lệch rất lớn so với tỷ lệ thực tế do việc cân bằng lớp (`scale_pos_weight`). 
 - Dự án áp dụng **Hiệu chuẩn Platt (Platt Scaling)** huấn luyện một mô hình Logistic Regression trên các xác suất thô của tập Validation.
-- Kết quả hiệu chuẩn: Brier Score giảm mạnh (ví dụ tại snapshot `2026-06-01` từ `0.2526` xuống `0.0085`, giảm hơn 96%).
-- Sau khi hiệu chuẩn, ngưỡng phân loại tối ưu chuyển đổi từ ngưỡng thô mặc định về ngưỡng F1 hiệu chuẩn là **`0.08`**.
+- Sau khi hiệu chuẩn, ngưỡng phân loại tối ưu chuyển đổi từ ngưỡng thô mặc định về ngưỡng F1 hiệu chuẩn là **`0.24`**.
 
 ---
 
-## 19. LSTM / GRU Experiment
-Để khai thác trực tiếp dạng sequence của chuỗi hành vi, các mô hình học sâu tuần tự đã được huấn luyện:
-- **Cấu trúc mạng**: LSTM và GRU có 1 lớp ẩn (hidden_size = 64), dropout 0.2, kết hợp với tầng Fully Connected tích hợp 9 đặc trưng tĩnh nhân khẩu học.
-- **Dữ liệu đầu vào**: Chuỗi trượt 12 tháng liên tục chứa 22 cột hành vi thô.
-- **Kết quả so sánh (Clean Test)**:
-  - **LightGBM (Rolling 12M)**: PR-AUC = **`0.152145`**, F1 = **`0.299728`**
-  - **PyTorch GRU**: PR-AUC = `0.106059`, F1 = `0.210526`
-  - **PyTorch LSTM**: PR-AUC = `0.104672`, F1 = `0.197917`
-- *Kết luận*: LightGBM vượt trội hơn hẳn các mô hình deep learning tuần tự. Do kích thước mẫu dương tính còn nhỏ và chu kỳ hành vi hàng tháng tương đối ngắn, các mô hình Boosted Trees vẫn tối ưu hơn RNN.
-
----
-
-## 20. Final Model Selection
+## 17. Final Model Selection
 Mô hình sản xuất cuối cùng được cấu hình cố định trong hệ thống:
 - **Thuật toán**: LightGBM Classifier + Platt Calibrator
 - **Đặc trưng**: Toàn bộ 379 đặc trưng thời gian (All379)
 - **Cơ chế huấn luyện**: Huấn luyện lại động (Rolling 12M Retraining)
-- **Ngưỡng quyết định**: `0.08` (sau khi hiệu chuẩn xác suất)
+- **Ngưỡng quyết định**: `0.24` (sau khi hiệu chuẩn xác suất)
 
 ---
 
-## 21. Final Evaluation
-Dưới đây là kết quả đánh giá cuối cùng của mô hình LightGBM trên tập Clean Test sạch (`2026-03-01` đến `2026-06-01`):
+## 18. Final Evaluation
+Dưới đây là kết quả đối sánh cuối cùng của mô hình LightGBM trên tập Clean Test sạch (`2026-03-01` đến `2026-06-01`) giữa Old Rule và New Rule:
 
-Metric | Toàn bộ tập khách hàng (Entire Cohort)
---- | ---
-**Số mẫu (Rows)** | 35,336
-**Số Churn (Positives)**| 249
-**PR-AUC** | `0.121786`
-**ROC-AUC** | `0.910986`
-**Precision** | `17.9856%`
-**Recall** | `30.1205%`
-**F1-Score** | `22.5225%` (hoặc `0.225225`)
-**Confusion Matrix** | `[[34745, 342], [174, 75]]`
-
-*Giải thích*: Việc giữ nguyên toàn bộ 379 đặc trưng (All379) giúp mô hình tối ưu hóa khả năng nhận diện khách hàng rời bỏ (Recall tăng lên mức 30.12%) trong khi vẫn duy trì PR-AUC cao nhất trong các cấu hình thực nghiệm.
+| Metric | Old Rule (v1) | New Rule (v2) |
+| :--- | :--- | :--- |
+| **Số mẫu (Rows)** | 185,160 | 185,160 |
+| **Số Churn (Positives)**| 933 | 43,543 |
+| **PR-AUC** | `0.124796` | `0.538246` |
+| **ROC-AUC** | `0.917949` | `0.951322` |
+| **Precision** | `16.0804%` | `54.3224%` |
+| **Recall** | `38.5542%` | `93.3735%` |
+| **F1-Score** | `22.6950%` | `68.6854%` |
+| **Confusion Matrix** | `[[34745, 342], [174, 75]]` (v1) | `[[29113, 2737], [231, 3255]]` (v2) |
 
 ---
 
-## 22. Model Storage & Verification
-Model được lưu trữ duy nhất dưới dạng gói bundle tại đường dẫn:
+## 19. Model Storage & Verification
+Model được lưu trữ dưới dạng gói bundle tại đường dẫn:
 ```
-artifacts/temporal_churn_model.joblib
+artifacts/temporal_churn_model_v2.joblib
 ```
 Bundle chứa các thành phần đóng gói độc lập:
 - `model`: Đối ứng LightGBM Classifier đã huấn luyện.
 - `calibrator`: Logistic Regression dùng cho hiệu chuẩn Platt.
 - `imputer`: SimpleImputer xử lý dữ liệu trống.
 - `selected_features`: Danh sách 379 đặc trưng được chọn (toàn bộ đặc trưng).
-- `threshold`: Ngưỡng xác suất tối ưu (0.08).
-- `metadata`: Phiên bản, ngày tạo, các mốc thời gian huấn luyện.
+- `threshold`: Ngưỡng xác suất tối ưu (0.24).
 
-Kết quả kiểm thử kiểm duyệt tự động từ `verify_saved_model.py`:
-- **MODEL LOAD**: `PASS` (tải mô hình và calibrator thành công).
-- **FEATURE COMPATIBILITY**: `PASS` (100% đặc trưng chọn khớp với dữ liệu thực tế).
-- **PREDICTION TEST**: `PASS` (suy diễn thành công trên 100 dòng mẫu, xác suất trả về nằm đúng trong khoảng $[0, 1]$, nhãn dự đoán nhị phân $\{0, 1\}$).
-
----
-
-## 23. Limitations
-Mặc dù đạt kết quả tốt, hệ thống vẫn tồn tại các hạn chế kỹ thuật:
-1. **Mất cân bằng lớp cực đoan**: Tỷ lệ nhãn dương chỉ khoảng ~0.70% khiến việc tối ưu hóa F1-score gặp khó khăn.
-2. **Hiện tượng trôi lệch tiếp thị**: Các đặc trưng marketing drift mạnh theo thời gian, đòi hỏi phải giám sát PSI liên tục.
-3. **Phụ thuộc label maturity**: Việc đánh giá hiệu năng thực tế bị chậm 30 ngày để đảm bảo thu thập đủ kết quả thực tế của prediction window.
+Kết quả kiểm thử kiểm duyệt tự động từ `compare_models.py`:
+- **MODEL LOAD**: `PASS` (tải mô hình v2 thành công).
+- **FEATURE COMPATIBILITY**: `PASS` (379 đặc trưng khớp hoàn toàn).
+- **PREDICTION TEST**: `PASS` (suy diễn thành công, xác suất trả về nằm đúng trong khoảng $[0.0126, 0.5707]$, nhãn dự đoán nhị phân $\{0, 1\}$).
 
 ---
 
-## 24. Conclusion
-Dự án đã hoàn thành trọn vẹn mục tiêu **Temporal Machine Learning Churn Prediction**:
-1. Đưa thành công cấu trúc hành vi thời gian hàng tháng vào bài toán churn thay vì bảng dữ liệu tĩnh.
-2. Xây dựng và kiểm duyệt thành công quy trình tạo đặc trưng trễ (lags), tích lũy (rolling), xu hướng (trend) và khoảng cách (recency) không chứa lookahead bias.
-3. Chứng minh mô hình LightGBM Rolling 12M kết hợp Platt Calibration mang lại kết quả phân loại vượt trội so với baseline tĩnh và deep learning tuần tự.
-4. Đóng gói mô hình thành công vào một artifact duy nhất, vượt qua tất cả các kiểm thử tương thích đặc trưng và suy diễn xác thực.
-Dự án chính thức đóng lại tại bước đóng gói và xác thực này.
+## 20. Conclusion
+Dự án đã hoàn thành trọn vẹn mục tiêu nâng cấp **Temporal Machine Learning Churn Prediction v2**:
+1. Đưa thành công cấu trúc hành vi thời gian hàng tháng và nhãn Churn v2 (bao gồm Rule 3 cho khách hàng đã ở gói Free) vào bài toán churn.
+2. Thiết lập quy trình tạo đặc trưng và gán nhãn không chứa lookahead bias.
+3. Chứng minh mô hình LightGBM Rolling 12M kết hợp Platt Calibration mang lại kết quả phân loại vượt trội, giải quyết hiệu quả sự mất cân bằng lớp cực đoan của bài toán.

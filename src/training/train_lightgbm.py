@@ -94,7 +94,8 @@ def perform_feature_selection(df: pd.DataFrame, train_mask: pd.Series, seed: int
         eval_metric="logloss",
         n_estimators=100,
         max_depth=4,
-        scale_pos_weight=scale_weight
+        scale_pos_weight=scale_weight,
+        device="cuda"
     )
     model.fit(X_imp, y)
     
