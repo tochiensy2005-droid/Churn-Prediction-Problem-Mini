@@ -1,11 +1,39 @@
 # Environment settings
 .env
+.env.local
+.env.*.local
 
 # Python Virtual Environments
+venv/
 .venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
 *.pyc
 
-# Local data / outputs
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Testing & Caching
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs & OS specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local data & temporary outputs
 output/
 artifacts/temp_*.parquet

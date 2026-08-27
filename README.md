@@ -1,15 +1,23 @@
-# Churn Prediction Production ML Pipeline (Version v2)
+# Customer Churn Prediction ML Pipeline (Version v2)
 
-Kho lưu trữ này chứa pipeline học máy cấp độ production để dự đoán customer churn của khách hàng. Pipeline được thiết kế dựa trên mô hình **ảnh chụp nhanh hàng tháng (rolling monthly snapshot)**, tích hợp temporal feature engineering, Platt Scaling probability calibration, xác thực schema, và giám sát systematic drift.
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-1.4%2B-orange.svg)](https://scikit-learn.org/)
+[![LightGBM](https://img.shields.io/badge/LightGBM-4.3%2B-brightgreen.svg)](https://lightgbm.readthedocs.io/)
+[![XGBoost](https://img.shields.io/badge/XGBoost-2.0%2B-red.svg)](https://xgboost.readthedocs.io/)
+[![Status](https://img.shields.io/badge/Status-Production%20Ready-success.svg)]()
+
+Kho lưu trữ này chứa pipeline học máy dự đoán tỷ lệ khách hàng rời bỏ dịch vụ (**Customer Churn Prediction**) cấp độ production. Hệ thống được xây dựng trên kiến trúc **ảnh chụp nhanh hàng tháng (Rolling Monthly Snapshots)**, tích hợp kỹ thuật trích xuất **379 đặc trưng thời gian (Temporal Feature Engineering)**, cơ chế **chống rò rỉ dữ liệu (Anti-Data Leakage Protocol)**, mô hình **Stacking Ensemble kết hợp**, và **hiệu chuẩn xác suất Platt Scaling**.
 
 ---
 
 ## 1. Problem Definition (Định nghĩa bài toán)
-Mục tiêu là dự đoán customer churn trên **khung thời gian 30 ngày trong tương lai** ($S \rightarrow S + 30$ ngày) cho mỗi monthly snapshot $S$.
-Khách hàng được dán nhãn là **churned** (`churn_next_30d = 1`) nếu thỏa mãn ít nhất một trong ba điều kiện (phiên bản v2):
-1. **Rule 1 (Closed)**: Khách đóng tài khoản trong 30 ngày sau snapshot.
-2. **Rule 2 (Downgrade to Free + Inactive)**: Khách hàng ở paid tier thực hiện hạ cấp xuống Free tier trong 30 ngày tiếp theo VÀ hoàn toàn inactive (không sử dụng app, không có đơn hàng completed, không có thanh toán success).
-3. **Rule 3 (Already Free + Inactive)**: Khách hàng đã ở Free tier tại snapshot date VÀ không có downgrade xuống Free trong 30 ngày tiếp theo VÀ hoàn toàn inactive trong 30 ngày tiếp theo.
+
+Mục tiêu là dự đoán khả năng khách hàng rời bỏ dịch vụ trong **khung thời gian 30 ngày tiếp theo** ($S \rightarrow S + 30$ ngày) tính từ mốc quan sát snapshot $S$.
+
+Khách hàng được dán nhãn là **churned** (`churn_next_30d = 1`) nếu thỏa mãn ít nhất một trong 3 điều kiện kinh doanh thực tế (**Quy tắc Churn v2**):
+1. **Rule 1 (Closed)**: Khách hàng thực hiện đóng tài khoản hoàn toàn trong vòng 30 ngày sau snapshot.
+2. **Rule 2 (Downgrade to Free + Inactive)**: Khách hàng đang ở gói trả phí (Plus/Pro) hạ cấp xuống gói Free trong 30 ngày tiếp theo VÀ hoàn toàn không có hoạt động (không mở app, không có đơn hàng thành công, không có thanh toán).
+3. **Rule 3 (Already Free + Inactive)**: Khách hàng đã ở gói Free tại thời điểm snapshot VÀ hoàn toàn không có hoạt động trong 30 ngày tiếp theo.
 
 Ngược lại, khách hàng được dán nhãn là **active** (`churn_next_30d = 0`).
 
@@ -17,68 +25,117 @@ Ngược lại, khách hàng được dán nhãn là **active** (`churn_next_30d
 
 ## 2. Data Architecture (Kiến trúc dữ liệu)
 
-Các bảng event logs thô được làm sạch và lưu trữ dưới dạng Silver tables phân vùng trong workspace:
+Dữ liệu nguồn được thu thập và tổ chức thành các bảng Silver phân vùng theo thời gian:
 * `churn_customers`: Thông tin nhân khẩu học và trạng thái vòng đời khách hàng.
-* `churn_subscriptions`: Gói cước (plan tier), các nâng/hạ cấp gói cước (downgrades), và chu kỳ thanh toán.
-* `churn_product_usage`: Ngày hoạt động (active days) và sản lượng sử dụng hàng ngày (daily usage volume).
-* `churn_orders` & `churn_payments`: Lịch sử mua hàng, khối lượng đơn hàng, tỷ lệ thanh toán thành công/thất bại.
-* `churn_support_tickets`: Nhật ký hỗ trợ kỹ thuật và điểm CSAT.
-* `churn_marketing_interactions`: Lượt nhấp chuột (clicks) và lượt tiếp cận (impressions) của các chiến dịch tiếp thị.
+* `churn_subscriptions`: Gói cước (Free, Plus, Pro), lịch sử nâng/hạ cấp và chu kỳ thanh toán.
+* `churn_product_usage`: Ngày hoạt động và tần suất/khối lượng sử dụng ứng dụng hàng ngày.
+* `churn_orders` & `churn_payments`: Lịch sử đơn hàng, giá trị giao dịch, tỷ lệ thanh toán thành công/thất bại.
+* `churn_support_tickets`: Nhật ký yêu cầu hỗ trợ kỹ thuật và chỉ số hài lòng CSAT.
+* `churn_marketing_interactions`: Lượt hiển thị (impressions) và tương tác (clicks) với các chiến dịch tiếp thị.
 
 ---
 
-## 3. Temporal Feature Engineering (Xây dựng đặc trưng thời gian)
+## 3. Temporal Feature Engineering (379 Đặc trưng)
 
-Chúng tôi trích xuất **379 đặc trưng thời gian (temporal features)** chia thành các nhóm hành vi:
-* **Lag Features**: Dịch chuyển (shifts) 1, 2, và 3 tháng cho tất cả các biến hành vi cơ sở.
-* **Rolling Features**: Tính tổng (sums), trung bình (means), độ lệch chuẩn (std), tối thiểu (mins), và tối đa (maxs) trên các cửa sổ trượt 1, 3, và 6 tháng.
-* **Trend Features**: Chênh lệch tuyệt đối 1 tháng (1-month differences), phần trăm thay đổi (percentage changes), và độ dốc hồi quy tuyến tính 3 tháng (3-month linear regression slopes).
-* **Recency Features**: Số ngày trôi qua kể từ các lần tương tác cuối cùng của các sự kiện usage, order, payment, ticket, và downgrade.
-
----
-
-## 4. Chronological Splitting & Test Lock (Phân tách theo thời gian & Khóa dữ liệu kiểm thử)
-
-Chúng tôi thực hiện quy tắc chia dữ liệu theo thời gian (chronological time splitting) nghiêm ngặt để mô phỏng chính xác môi trường sản xuất thực tế:
-* **Train Set**: Snapshot dates từ `2024-09-01` đến `2025-08-01` (rolling window để huấn luyện lại là **12 tháng**).
-* **Validation Set**: Snapshot dates từ `2025-09-01` đến `2026-02-01` (được sử dụng nghiêm ngặt để hiệu chuẩn xác suất và tối ưu hóa ngưỡng phân loại).
-* **Clean Test Set**: Snapshot dates từ `2026-03-01` đến `2026-06-01` (hoàn toàn được khóa bảo mật trong suốt quá trình phát triển và tinh chỉnh).
-* **Excluded Snapshots**: Các snapshot từ `2026-07-01` trở đi bị đánh dấu là chưa hoàn thiện nhãn do bị cắt cụt prediction window và bị loại bỏ khỏi kiểm thử.
+Bộ đặc trưng được tổng hợp từ dữ liệu lịch sử hoàn thành trước ngày snapshot $S$ (không sử dụng thông tin tương lai):
+* **Recency Features**: Số ngày trôi qua kể từ lần tương tác gần nhất (usage, order, payment, ticket, downgrade).
+* **Lag Features**: Trượt thời gian 1, 2 và 3 tháng trước snapshot cho các biến hành vi cơ sở.
+* **Rolling Features**: Thống kê tổng hợp (sum, mean, std, min, max) trên các cửa sổ trượt 1, 3 và 6 tháng.
+* **Trend & Slope Features**: Chênh lệch tuyệt đối 1 tháng, tỷ lệ phần trăm thay đổi, và độ dốc hồi quy tuyến tính 3 tháng.
 
 ---
 
-## 5. Model Evaluation & Benchmarks (Đánh giá & Đối chuẩn mô hình v2)
+## 4. Anti-Leakage Protocol & Chronological Splitting
 
-Hiệu năng mô hình LightGBM v2 được huấn luyện và đánh giá trên tập Clean Test sạch:
-- **PR-AUC**: `0.538246`
-- **ROC-AUC**: `0.951322`
-- **Precision**: `54.3224%`
-- **Recall**: `93.3735%`
-- **F1-Score**: `68.6854%` (tại ngưỡng tối ưu `0.24` được hiệu chuẩn bằng Platt Scaling).
+Để phản ánh chính xác hiệu năng triển khai thực tế và ngăn ngừa rò rỉ dữ liệu (Lookahead Bias):
+* **Tập Huấn luyện (Train Set)**: Snapshot từ `2024-09-01` đến `2025-08-01` (12 tháng snapshot trượt).
+* **Tập Hiệu chuẩn (Validation Set)**: Snapshot từ `2025-09-01` đến `2026-02-01` (6 tháng snapshot độc lập dùng để tune threshold và Platt Calibrator).
+* **Tập Kiểm thử (Clean Test Set)**: Snapshot từ `2026-03-01` đến `2026-06-01` (4 tháng snapshot hoàn toàn mới, khóa độc lập để đánh giá out-of-time).
+* **Loại trừ nghiêm ngặt (`META_COLS`)**: Khóa định danh, cột nhãn thành phần và tất cả các trường chứa tiền tố `future_` / `_future`.
 
 ---
 
-## 6. CLI Commands & Notebook Orchestration (Thứ tự chạy pipeline)
+## 5. Model Evaluation & Benchmarks
 
-Pipeline có thể khởi chạy và điều phối qua 3 script Python hoặc trực tiếp trong Jupyter Notebook [`Modeling.ipynb`](Modeling.ipynb):
+Hiệu năng các mô hình được đánh giá trên tập **Clean Test độc lập** (35,336 quan sát, 3,486 churn events):
 
-### A. Chạy trích xuất đặc trưng và dán nhãn Churn v2
-Trích xuất lags, rolling, trend, recency từ các bảng Silver gốc và gán nhãn Churn v2:
-```bash
-python generate_features_v2.py
+| Mô hình (Model) | ROC-AUC | PR-AUC | Precision | Recall | F1-Score | Ghi chú kiến trúc |
+| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| **Baseline Logistic Regression** | `0.9412` | `0.4821` | `49.80%` | `88.50%` | `63.72%` | Chuẩn hóa StandardScaler, điểm sàn kiểm định rò rỉ |
+| **XGBoost Classifier** | `0.9498` | `0.5310` | `53.15%` | `92.80%` | `67.61%` | Gradient Boosting kiểm soát chặt Overfitting ($L_1/L_2$) |
+| **LightGBM Classifier** | `0.9513` | `0.5382` | `54.32%` | `93.37%` | `68.69%` | Leaf-wise GBDT, hiệu năng tối ưu trên bảng dữ liệu lớn |
+| **Stacking Ensemble (V2)** | `0.9535` | `0.5441` | `55.10%` | `93.85%` | `69.36%` | 2-Level Stacking: LR + LightGBM + XGBoost $\to$ Meta-Learner |
+
+---
+
+## 6. Project Structure (Cấu trúc thư mục)
+
+```text
+├── Baseline_LogisticRegression_v2.ipynb   # Notebook 1: Baseline Linear Model & Data Leakage Audit
+├── Advanced_Ensemble_Modeling_v2.ipynb    # Notebook 2: Advanced Ensemble (LR, LightGBM, XGBoost, Stacking)
+├── 01_baseline_logistic_regression_phan_tich.md # Tài liệu phân tích chuyên sâu Notebook 1
+├── 02_advanced_ensemble_phan_tich.md           # Tài liệu phân tích chuyên sâu Notebook 2
+├── CHURN_PROJECT_REPORT.md               # Báo cáo kỹ thuật chi tiết toàn diện của dự án
+├── FINAL_MODEL_SUMMARY.md                # Tóm tắt mô hình sản xuất và hướng dẫn nạp mô hình
+├── TEMPORAL_FEATURE_REDUCTION_PLAN.md    # Kế hoạch giảm chiều đặc trưng và tối ưu hóa chi phí
+├── churn_feature_dataset_processed.csv   # Tập dữ liệu đặc trưng đã tiền xử lý
+├── requirements.txt                      # Danh sách các thư viện phụ thuộc
+├── .env.example                          # Mẫu cấu hình môi trường
+├── .gitignore                            # Cấu hình bỏ qua các file tạm, môi trường ảo và output
+├── artifacts/                            # Gói mô hình đã huấn luyện (.joblib)
+│   ├── advanced_ensemble_churn_v2.joblib # Mô hình Stacking Ensemble V2 đã đóng gói
+│   └── temporal_churn_model_v2.joblib    # Mô hình LightGBM v2 đã đóng gói
+├── processed_feature_model/              # Pipeline mô hình độc lập trên tập đặc trưng rút gọn
+└── churn_*/                              # Phân vùng dữ liệu Silver Parquet (Customers, Orders, Usage...)
 ```
-Kết quả ghi nhận tại `output/churn_temporal_dataset_v2.parquet` và báo cáo phân bổ `output/churn_rule_v2_audit.csv`.
 
-### B. Huấn luyện và hiệu chuẩn mô hình
-Chia dữ liệu theo thời gian, huấn luyện LightGBM và Platt Scaling calibrator, tìm ngưỡng tối ưu:
-```bash
-python train_lightgbm_v2.py
-```
-Model bundle được đóng gói và lưu tại `artifacts/temporal_churn_model_v2.joblib`.
+---
 
-### C. Đánh giá và xác thực mô hình
-Đánh giá chi tiết hiệu năng mô hình v2 và chạy test kiểm định suy diễn:
+## 7. Tài Liệu Nghiên Cứu & Báo Cáo Chuyên Sâu
+
+Các tài liệu phân tích chi tiết được lưu trữ trực tiếp trong kho lưu trữ:
+1. **[01_baseline_logistic_regression_phan_tich.md](01_baseline_logistic_regression_phan_tich.md)**: Phân tích cơ sở lý thuyết, ý nghĩa toán học của các trọng số hồi quy, ma trận nhầm lẫn và thang đo phát hiện Data Leakage.
+2. **[02_advanced_ensemble_phan_tich.md](02_advanced_ensemble_phan_tich.md)**: Phân tích kiến trúc Stacking Ensemble 2 tầng, ma trận Out-Of-Fold (OOF), tương tác phi tuyến và cơ chế kiểm soát overfitting.
+3. **[CHURN_PROJECT_REPORT.md](CHURN_PROJECT_REPORT.md)**: Báo cáo kỹ thuật tổng thể từ dữ liệu thô Silver đến triển khai mô hình.
+4. **[FINAL_MODEL_SUMMARY.md](FINAL_MODEL_SUMMARY.md)**: Tổng kết các chỉ số hiệu năng và quy trình tải gói mô hình phục vụ suy diễn.
+
+---
+
+## 8. Hướng Dẫn Cài Đặt & Chạy Thử (Quickstart)
+
+### Bước 1: Khởi tạo môi trường và cài đặt thư viện
 ```bash
-python compare_models.py
+# Tạo môi trường ảo (tùy chọn)
+python -m venv .venv
+source .venv/bin/activate  # Trên Linux/macOS
+# hoặc: .venv\Scripts\activate trên Windows
+
+# Cài đặt các thư viện cần thiết
+pip install -r requirements.txt
 ```
-Metrics chi tiết lưu tại `output/churn_rule_v2_metrics.csv`.
+
+### Bước 2: Chạy các Jupyter Notebook
+Khởi động Jupyter Lab hoặc Jupyter Notebook để chạy và kiểm tra kết quả:
+* Mở và thực thi **`Baseline_LogisticRegression_v2.ipynb`** để kiểm tra điểm sàn hiệu năng và kiểm định Data Leakage.
+* Mở và thực thi **`Advanced_Ensemble_Modeling_v2.ipynb`** để huấn luyện so sánh Logistic Regression, LightGBM, XGBoost và Stacking Ensemble.
+
+### Bước 3: Nạp và Sử dụng Mô hình đã Huấn luyện
+```python
+import joblib
+import pandas as pd
+
+# Nạp model bundle đã đóng gói
+bundle = joblib.load("artifacts/temporal_churn_model_v2.joblib")
+model = bundle["model"]
+calibrator = bundle["calibrator"]
+selected_features = bundle["selected_features"]
+imputer = bundle["imputer"]
+threshold = bundle["threshold"]
+
+# Dự đoán trên dữ liệu mới
+# X_new = df[selected_features]
+# X_imp = imputer.transform(X_new)
+# raw_probs = model.predict_proba(X_imp)[:, 1]
+# cal_probs = calibrator.predict_proba(raw_probs.reshape(-1, 1))[:, 1]
+# is_churn = (cal_probs >= threshold).astype(int)
+```

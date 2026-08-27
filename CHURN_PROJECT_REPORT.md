@@ -264,7 +264,7 @@ Bundle chứa các thành phần đóng gói độc lập:
 - `selected_features`: Danh sách 379 đặc trưng được chọn (toàn bộ đặc trưng).
 - `threshold`: Ngưỡng xác suất tối ưu (0.24).
 
-Kết quả kiểm thử kiểm duyệt tự động từ `compare_models.py`:
+Kết quả kiểm thử kiểm duyệt tự động từ quy trình xác thực mô hình:
 - **MODEL LOAD**: `PASS` (tải mô hình v2 thành công).
 - **FEATURE COMPATIBILITY**: `PASS` (379 đặc trưng khớp hoàn toàn).
 - **PREDICTION TEST**: `PASS` (suy diễn thành công, xác suất trả về nằm đúng trong khoảng $[0.0126, 0.5707]$, nhãn dự đoán nhị phân $\{0, 1\}$).
