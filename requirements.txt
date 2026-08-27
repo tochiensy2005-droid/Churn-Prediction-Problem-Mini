@@ -1,0 +1,8 @@
+# Core Machine Learning & Data Processing Libraries
+lightgbm>=4.6.0
+scikit-learn>=1.8.0
+pandas>=2.2.0
+numpy>=2.0.0
+joblib>=1.4.0
+pyarrow>=18.0.0
+xgboost>=3.0.0
